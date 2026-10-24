@@ -1,0 +1,11 @@
+bin/
+obj/
+output/
+/测试装配体/
+*.sldprt
+*.sldasm
+*.slddrw
+*.step
+*.stp
+*.dll
+*.exe
