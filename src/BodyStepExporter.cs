@@ -16,6 +16,8 @@ namespace CadPublishKit
         public long bytes;
         public double[] source_axis_limits, reopened_axis_limits;
         public double? max_axis_delta;
+        public string configuration, component_source_path;
+        public int instance_count = 1, original_solids, reopened_solids;
     }
     public sealed class BodyExportReport
     {
@@ -23,19 +25,29 @@ namespace CadPublishKit
         public string validation = "Reopen in SolidWorks, require one solid and no sheets; compare six axis extrema in model coordinates within 1e-6 m. Not a full shape-equivalence test.";
         public string options = "SaveAs2: current version, silent, no selection, existing STEP preferences unchanged. Copy body into separate temporary document without applying transforms.";
         public int step_ap;
+        public string document_kind = "part_bodies";
+        public string export_scope = "all";
+        public int available_count;
+        public ScanReport assembly_scan;
         public bool source_state_preserved;
         public List<string> warnings = new List<string>();
         public List<BodyExportResult> bodies = new List<BodyExportResult>();
     }
     public static class BodyStepExporter
     {
-        public static int Run(ISldWorks app, string outputParent, string templateOverride)
+        public static int Run(ISldWorks app, string outputParent, string templateOverride, Action<string> progress = null, Action<string> runCreated = null, IEnumerable<string> selectedFiles = null)
         {
             var source = app.ActiveDoc as IModelDoc2;
-            if (source == null || source.GetType() != (int)swDocumentTypes_e.swDocPART)
-                throw new InvalidOperationException("Body export requires an active part document.");
-            var bodies = ((IPartDoc)source).GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
-            if (bodies == null || bodies.Length == 0) throw new InvalidOperationException("No solid bodies to export.");
+            if (source == null) throw new InvalidOperationException("No active document.");
+            bool assembly = source.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY;
+            var plan = assembly ? AssemblyExportPlan.Build(source) : null;
+            var jobs = assembly ? plan.Jobs : (((IPartDoc)source).GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0])
+                .Cast<IBody2>().Select(b => new ExportGeometry { Name = b.Name, Bodies = new[] { b } }).ToList();
+            if (jobs.Count == 0) throw new InvalidOperationException("No solid parts to export.");
+            for (int n = 0; n < jobs.Count; n++) if (!assembly) jobs[n].FileName = "body_" + (n + 1).ToString("D3") + ".step";
+            int availableCount = jobs.Count;
+            var indices = ExportSelection.Indices(jobs.Select(j => j.FileName), selectedFiles);
+            jobs = indices.Select(i => jobs[i]).ToList();
             string template = templateOverride ?? app.GetDocumentTemplate((int)swDocumentTypes_e.swDocPART, "", 0, 0, 0);
             if (String.IsNullOrEmpty(template) || !File.Exists(template)) throw new InvalidOperationException("No usable default part template.");
             var selection = (ISelectionMgr)source.SelectionManager;
@@ -49,6 +61,12 @@ namespace CadPublishKit
             var report = new BodyExportReport { source_title = source.GetTitle(), source_path = source.GetPathName(),
                 configuration = source.ConfigurationManager.ActiveConfiguration.Name, revision = app.RevisionNumber(), template = template,
                 step_ap = app.GetUserPreferenceIntegerValue((int)swUserPreferenceIntegerValue_e.swStepAP) };
+            report.available_count = availableCount; report.export_scope = jobs.Count == availableCount ? "all" : "selection";
+            if (assembly) {
+                report.document_kind = "assembly"; report.assembly_scan = plan.Scan;
+                report.validation = "Reopen each unique referenced part; compare solid count, total face count and aggregate six axis extrema within 1e-6 m in component-local coordinates. Not full shape equivalence. Original assembly STEP is copied unchanged.";
+                report.warnings.AddRange(plan.Errors);
+            }
             var initialDocs = Documents(app);
             if (initialDocs.Count(d => d.GetTitle() == source.GetTitle()) != 1)
                 throw new InvalidOperationException("Ambiguous source document title; cannot safely restore active document.");
@@ -64,30 +82,36 @@ namespace CadPublishKit
                     byte[] bytes = Encoding.UTF8.GetBytes(serializer.Serialize(report));
                     json.Position = 0; json.Write(bytes, 0, bytes.Length); json.SetLength(bytes.Length); json.Flush();
                 };
-                for (int i = 0; i < bodies.Length; i++) {
+                for (int i = 0; i < jobs.Count; i++) {
                     report.bodies.Add(new BodyExportResult { body_id = "body_" + (i + 1),
-                        export_path = Path.Combine(run, "parts", "body_" + (i + 1).ToString("D3") + ".step") });
+                        body_name = jobs[i].Name, configuration = jobs[i].Configuration, component_source_path = jobs[i].SourcePath,
+                        instance_count = jobs[i].Quantity,
+                        export_path = Path.Combine(run, "parts", jobs[i].FileName) });
                 }
                 checkpoint();
+                if (runCreated != null) runCreated(run);
                 Console.WriteLine("Output: " + run);
                 try {
-                    for (int i = 0; i < bodies.Length; i++) {
+                    for (int i = 0; i < jobs.Count; i++) {
                         BodyExportResult row = report.bodies[i];
                         IModelDoc2 temp = null, reopened = null;
                         try {
-                            var body = (IBody2)bodies[i];
-                            row.body_name = body.Name;
-                            row.original_faces = body.GetFaceCount();
-                            row.source_axis_limits = AxisLimits(body);
-                            Console.WriteLine("Exporting {0}/{1}: {2}", i + 1, bodies.Length, row.body_name);
-                            object copy = body.Copy();
-                            if (copy == null) throw new InvalidOperationException("Body copy failed.");
+                            var job = jobs[i];
+                            if (job.Error != null) throw new InvalidOperationException(job.Error);
+                            var geometry = job.Bodies;
+                            row.original_solids = geometry.Length;
+                            row.original_faces = geometry.Sum(b => b.GetFaceCount());
+                            row.source_axis_limits = CombinedLimits(geometry);
+                            if (progress != null) progress(String.Format("正在导出并验证 {0} / {1}：{2}", i + 1, jobs.Count, row.body_name));
                             temp = app.NewDocument(template, 0, 0, 0) as IModelDoc2;
                             if (temp == null || initialDocs.Any(d => Object.ReferenceEquals(d, temp))) throw new InvalidOperationException("Temporary document creation failed.");
                             if (Count((IPartDoc)temp, swBodyType_e.swSolidBody) != 0 || Count((IPartDoc)temp, swBodyType_e.swSheetBody) != 0)
                                 throw new InvalidOperationException("Template contains geometry; refusing to export extra bodies.");
-                            if (((IPartDoc)temp).CreateFeatureFromBody3(copy, false, (int)swCreateFeatureBodyOpts_e.swCreateFeatureBodyCheck) == null)
-                                throw new InvalidOperationException("Creating imported body feature failed.");
+                            foreach (var body in geometry) {
+                                object copy = body.Copy();
+                                if (copy == null || ((IPartDoc)temp).CreateFeatureFromBody3(copy, false, (int)swCreateFeatureBodyOpts_e.swCreateFeatureBodyCheck) == null)
+                                    throw new InvalidOperationException("Creating imported body feature failed.");
+                            }
                             Activate(app, temp);
                             temp.ClearSelection2(true); // Never clear the source document selection.
                             if (File.Exists(row.export_path)) throw new IOException("Output already exists; refusing overwrite.");
@@ -101,11 +125,13 @@ namespace CadPublishKit
                             reopened = app.LoadFile4(row.export_path, "r", null, ref row.load_errors) as IModelDoc2;
                             if (reopened == null || row.load_errors != 0) throw new IOException("STEP reopen failed; code " + row.load_errors);
                             if (reopened.GetType() != (int)swDocumentTypes_e.swDocPART) throw new IOException("Reopened STEP is not a part; validation unavailable.");
-                            if (Count((IPartDoc)reopened, swBodyType_e.swSolidBody) != 1 || Count((IPartDoc)reopened, swBodyType_e.swSheetBody) != 0)
-                                throw new IOException("Expected exactly one solid and no sheets after reimport.");
-                            var back = (IBody2)((object[])((IPartDoc)reopened).GetBodies2((int)swBodyType_e.swSolidBody, false))[0];
-                            row.reopened_faces = back.GetFaceCount();
-                            row.reopened_axis_limits = AxisLimits(back);
+                            row.reopened_solids = Count((IPartDoc)reopened, swBodyType_e.swSolidBody);
+                            if (row.reopened_solids != row.original_solids || Count((IPartDoc)reopened, swBodyType_e.swSheetBody) != 0)
+                                throw new IOException("Solid/sheet counts changed after reimport.");
+                            var back = ((object[])((IPartDoc)reopened).GetBodies2((int)swBodyType_e.swSolidBody, false)).Cast<IBody2>().ToArray();
+                            row.reopened_faces = back.Sum(b => b.GetFaceCount());
+                            row.reopened_axis_limits = CombinedLimits(back);
+                            if (assembly && row.reopened_faces != row.original_faces) throw new IOException("Face count changed; review required.");
                             row.max_axis_delta = row.source_axis_limits.Zip(row.reopened_axis_limits, (a, b) => Math.Abs(a - b)).Max();
                             if (row.max_axis_delta > 1e-6) throw new IOException("Axis extents changed beyond 1e-6 m tolerance.");
                             row.status = row.save_warnings == 0 ? "verified" : "verified_with_save_warnings";
@@ -128,6 +154,7 @@ namespace CadPublishKit
                             sameSelection = Object.ReferenceEquals(selectedObjects[i], selection.GetSelectedObject6(i + 1, -1)) && selectedMarks[i] == selection.GetSelectedObjectMark(i + 1);
                         report.source_state_preserved = Object.ReferenceEquals(app.ActiveDoc, source) && source.GetSaveFlag() == dirty &&
                             source.GetPathName() == report.source_path && source.ConfigurationManager.ActiveConfiguration.Name == report.configuration && sameSelection;
+                        if (assembly && !plan.StateUnchanged()) report.source_state_preserved = false;
                         if (!report.source_state_preserved) report.warnings.Add("Source state differs: inspect document/configuration/selection/dirty flag. No source save or forced restoration performed.");
                     }
                     catch (Exception ex) { report.warnings.Add("Source activation/state check failed: " + ex.Message); }
@@ -161,7 +188,12 @@ namespace CadPublishKit
             }
             catch (Exception ex) { report.warnings.Add("Temporary document cleanup: " + ex.Message); }
         }
-        private static double[] AxisLimits(IBody2 body)
+        internal static double[] CombinedLimits(IEnumerable<IBody2> bodies)
+        {
+            var all = bodies.Select(AxisLimits).ToArray();
+            return Enumerable.Range(0, 6).Select(i => i < 3 ? all.Min(a => a[i]) : all.Max(a => a[i])).ToArray();
+        }
+        internal static double[] AxisLimits(IBody2 body)
         {
             var values = new double[6];
             for (int i = 0; i < 6; i++) {

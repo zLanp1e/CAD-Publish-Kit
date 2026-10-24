@@ -8,12 +8,16 @@ namespace CadPublishKit
     public class Instance
     {
         public string instance_id, parent_id, part_id, component_name, source_path, configuration, kind, status;
+        public double[] transform;
         public List<string> issues = new List<string>();
     }
     public class Part
     {
         public string part_id, part_name, source_path, configuration;
+        public string export_filename, export_issue;
         public int instance_count;
+        public int solid_count;
+        public int? face_count;
     }
     public class BodyRecord
     {

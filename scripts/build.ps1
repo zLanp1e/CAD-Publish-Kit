@@ -17,8 +17,16 @@ foreach ($name in $references) {
     Copy-Item -LiteralPath (Join-Path $interop $name) -Destination $bin
 }
 $source = @(Get-ChildItem (Join-Path $root 'src') -Filter '*.cs' | ForEach-Object FullName)
-& $compiler /nologo /target:exe /platform:x64 /r:System.Web.Extensions.dll "/r:$bin\SolidWorks.Interop.sldworks.dll" "/r:$bin\SolidWorks.Interop.swconst.dll" "/out:$bin\CadPublishKit.exe" $source
+& $compiler /nologo /target:exe /main:CadPublishKit.Program /platform:x64 /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$bin\SolidWorks.Interop.sldworks.dll" "/r:$bin\SolidWorks.Interop.swconst.dll" "/out:$bin\CadPublishKit.exe" $source
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
+& $compiler /nologo /target:winexe /main:CadPublishKit.DesktopProgram /platform:x64 /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$bin\SolidWorks.Interop.sldworks.dll" "/r:$bin\SolidWorks.Interop.swconst.dll" "/out:$bin\CADPublishKit.Desktop.exe" $source
+if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }
 & $compiler /nologo /target:exe /platform:x64 /r:System.Web.Extensions.dll "/out:$bin\CoreTests.exe" "$root\src\Models.cs" "$root\src\ManifestWriter.cs" "$root\tests\CoreTests.cs"
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
+& $compiler /nologo /target:exe /platform:x64 "/r:$bin\CadPublishKit.exe" "/out:$bin\DesktopPublishTests.exe" "$root\tests\DesktopPublishTests.cs"
+if ($LASTEXITCODE -ne 0) { throw 'Desktop test compilation failed.' }
+& $compiler /nologo /target:exe /platform:x64 "/r:$bin\CadPublishKit.exe" "/out:$bin\BatchTests.exe" "$root\tests\BatchTests.cs"
+if ($LASTEXITCODE -ne 0) { throw 'Batch test compilation failed.' }
+& $compiler /nologo /target:exe /platform:x64 "/r:$bin\CadPublishKit.exe" "/out:$bin\BatchCadTests.exe" "$root\tests\BatchCadTests.cs"
+if ($LASTEXITCODE -ne 0) { throw 'Batch CAD test compilation failed.' }
 Write-Host "Build complete: $bin"
