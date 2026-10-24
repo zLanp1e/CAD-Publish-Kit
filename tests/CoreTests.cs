@@ -31,10 +31,23 @@ internal static class CoreTests
             bool refused = false;
             try { ManifestWriter.Write(report, directory); } catch (IOException) { refused = true; }
             Check(refused && File.ReadAllText(Path.Combine(directory, "manifest.json")) == original, "existing output preserved");
+            string bodyDir = Path.Combine(directory, "body-report");
+            var bodyReport = new ScanReport { mode = "synthetic_unit_test", document_kind = "part_bodies" };
+            bodyReport.bodies.Add(new BodyRecord { body_id = "body_1", body_name = "same", status = "readable", face_count = 12 });
+            bodyReport.bodies.Add(new BodyRecord { body_id = "body_2", body_name = "same", status = "read_failed" });
+            ManifestWriter.Write(bodyReport, bodyDir);
+            Check(!File.Exists(Path.Combine(bodyDir, "parts.csv")) && !File.Exists(Path.Combine(bodyDir, "instances.csv")), "body report does not invent component BOM");
+            string bodyCsv = File.ReadAllText(Path.Combine(bodyDir, "bodies.csv"));
+            Check(bodyCsv.Contains("body_1") && bodyCsv.Contains("body_2") && bodyCsv.Contains("read_failed"), "same-named bodies and failures preserved separately");
             Console.WriteLine("Passed: " + count); return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
         finally {
+            string bodyDir = Path.Combine(directory, "body-report");
+            foreach (string name in new[] { "manifest.json", "bodies.csv" }) {
+                string file = Path.Combine(bodyDir, name); if (File.Exists(file)) File.Delete(file);
+            }
+            if (Directory.Exists(bodyDir)) Directory.Delete(bodyDir, false);
             // Delete only explicitly named files in this test's newly generated directory.
             foreach (string name in new[] { "manifest.json", "parts.csv", "instances.csv" }) {
                 string file = Path.Combine(directory, name); if (File.Exists(file)) File.Delete(file);

@@ -2,6 +2,7 @@ bin/
 obj/
 output/
 /测试装配体/
+/test-cases/
 *.sldprt
 *.sldasm
 *.slddrw

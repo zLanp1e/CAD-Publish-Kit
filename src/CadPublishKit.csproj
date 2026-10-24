@@ -7,10 +7,11 @@
     <OutputPath>..\bin\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="BodyStepExporter.cs" />
     <Reference Include="System" /><Reference Include="System.Core" /><Reference Include="System.Web.Extensions" />
     <Reference Include="SolidWorks.Interop.sldworks"><HintPath>$(SolidWorksDirectory)\api\redist\SolidWorks.Interop.sldworks.dll</HintPath></Reference>
     <Reference Include="SolidWorks.Interop.swconst"><HintPath>$(SolidWorksDirectory)\api\redist\SolidWorks.Interop.swconst.dll</HintPath></Reference>
-    <Compile Include="Models.cs" /><Compile Include="SolidWorksScanner.cs" /><Compile Include="ManifestWriter.cs" /><Compile Include="Program.cs" />
+    <Compile Include="Models.cs" /><Compile Include="SolidWorksScanner.cs" /><Compile Include="BodyScanner.cs" /><Compile Include="ManifestWriter.cs" /><Compile Include="Program.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

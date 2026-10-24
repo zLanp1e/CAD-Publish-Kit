@@ -15,10 +15,19 @@ namespace CadPublishKit
         public string part_id, part_name, source_path, configuration;
         public int instance_count;
     }
+    public class BodyRecord
+    {
+        public string body_id, body_name, body_type, status;
+        public int? face_count;
+        public List<string> issues = new List<string>();
+    }
     public class ScanReport
     {
         public string mode = "real_com_scan", revision, assembly_path, configuration;
         public string created_at = DateTimeOffset.Now.ToString("o");
+        public string document_kind = "assembly", document_title, source_path;
+        public bool? state_check_passed;
+        public List<BodyRecord> bodies = new List<BodyRecord>();
         public List<Instance> instances = new List<Instance>();
         public List<Part> parts = new List<Part>();
         public List<string> warnings = new List<string>();
